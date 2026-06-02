@@ -1,0 +1,20 @@
+.idea
+target/
+
+# Rust - Archivos generados
+Cargo.lock
+*.pdb
+
+# Editor/IDE
+.vscode/
+*.swp
+*.swo
+*~
+.DS_Store
+
+# Logs
+*.log
+
+# Archivos temporales
+*.tmp
+*.bak
