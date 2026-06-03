@@ -2,8 +2,6 @@
 
 **Respaldo automático con versionado para Windows**
 
-> _¿Por qué Rust? Porque me gusta._ 
-
 ---
 
 ## Descripción
