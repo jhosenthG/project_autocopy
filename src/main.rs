@@ -2,12 +2,10 @@ use std::env;
 use std::fs::{self, OpenOptions};
 use std::io::Write;
 use std::path::PathBuf;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::mpsc;
-use std::sync::Arc;
-use std::thread;
 
-mod backup;
+use std::sync::atomic::AtomicBool;
+use std::sync::{mpsc, Arc};
+
 mod config;
 mod copy;
 mod error;
@@ -15,11 +13,7 @@ mod scheduler;
 mod ui;
 
 use config::AppConfig;
-use copy::{perform_backup, validate_paths, BackupOptions, ProgressEvent};
-
-fn get_exe_path() -> PathBuf {
-    env::current_exe().unwrap_or_else(|_| PathBuf::from("autocopy.exe"))
-}
+use copy::{perform_backup, validate_paths, BackupOptions};
 
 fn get_log_dir() -> PathBuf {
     let app_data = env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
