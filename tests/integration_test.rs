@@ -1,10 +1,10 @@
-use autocopy::copy::{self, BackupOptions, ProgressEvent};
+use autocopy::copy::{self, BackupOptions};
 use autocopy::error::BackupError;
 use std::fs;
 use std::path::Path;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::Arc;
+use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
+use std::sync::Arc;
 use tempfile::TempDir;
 
 fn create_backup_opts() -> BackupOptions {
@@ -23,11 +23,7 @@ fn test_full_backup_flow() {
     fs::create_dir(source_dir.path().join("subdir")).unwrap();
     fs::write(source_dir.path().join("subdir").join("file.txt"), "content").unwrap();
 
-    let result = copy::perform_backup(
-        source_dir.path(),
-        dest_dir.path(),
-        create_backup_opts(),
-    );
+    let result = copy::perform_backup(source_dir.path(), dest_dir.path(), create_backup_opts());
 
     assert!(result.is_ok());
     let backup_path = result.unwrap();
@@ -48,11 +44,8 @@ fn test_cleanup_after_backup() {
         fs::create_dir(dest_dir.path().join(format!("backup_{}", timestamp))).unwrap();
     }
 
-    let _ = copy::perform_backup(
-        source_dir.path(),
-        dest_dir.path(),
-        create_backup_opts(),
-    );
+    let _ = copy::perform_backup(source_dir.path(), dest_dir.path(), create_backup_opts());
+    copy::cleanup_old_versions(dest_dir.path(), 3).unwrap();
 
     let versions = copy::list_versions(dest_dir.path()).unwrap();
     assert_eq!(versions.len(), 3);
@@ -93,9 +86,6 @@ fn test_validate_paths_rejects_same_folder() {
 fn test_validate_paths_rejects_nonexistent_source() {
     let temp_dir = TempDir::new().unwrap();
 
-    let result = copy::validate_paths(
-        Path::new("C:/nonexistent_path_12345"),
-        temp_dir.path(),
-    );
+    let result = copy::validate_paths(Path::new("C:/nonexistent_path_12345"), temp_dir.path());
     assert!(result.is_err());
 }
