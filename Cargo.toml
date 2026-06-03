@@ -2,6 +2,11 @@
 name = "autocopy"
 version = "0.1.0"
 edition = "2021"
+description = "Backup tool with versioning and GUI for Windows"
+keywords = ["backup", "versioning", "egui", "windows"]
+repository = "https://github.com/example/autocopy"
+authors = ["Author <author@example.com>"]
+license = "MIT"
 
 [dependencies]
 eframe = "0.29"
@@ -13,7 +18,6 @@ chrono = { version = "0.4", features = ["serde"] }
 anyhow = "1.0"
 thiserror = "1.0"
 sysinfo = "0.30"
-tokio = { version = "1.0", features = ["rt", "time"] }
 windows = { version = "0.58", features = ["Win32_System_TaskScheduler", "Win32_Foundation", "Win32_System_Com", "Win32_System_Ole"] }
 
 tempfile = "3.10"
