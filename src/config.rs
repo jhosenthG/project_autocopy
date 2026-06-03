@@ -44,14 +44,12 @@ impl AppConfig {
 
         if config_path.exists() {
             match fs::read_to_string(&config_path) {
-                Ok(content) => {
-                    match serde_json::from_str(&content) {
-                        Ok(config) => return config,
-                        Err(e) => {
-                            eprintln!("Warning: failed to parse config, using defaults: {}", e);
-                        }
+                Ok(content) => match serde_json::from_str(&content) {
+                    Ok(config) => return config,
+                    Err(e) => {
+                        eprintln!("Warning: failed to parse config, using defaults: {}", e);
                     }
-                }
+                },
                 Err(e) => {
                     eprintln!("Warning: failed to read config file, using defaults: {}", e);
                 }
@@ -98,11 +96,15 @@ mod tests {
 
     #[test]
     fn test_validate_schedule_time_invalid() {
-        assert!(!AppConfig::validate_schedule_time("24:00"));
-        assert!(!AppConfig::validate_schedule_time("12:60"));
-        assert!(!AppConfig::validate_schedule_time("1:30"));
+        // Formato inválido
         assert!(!AppConfig::validate_schedule_time("14-30"));
         assert!(!AppConfig::validate_schedule_time(""));
+        assert!(!AppConfig::validate_schedule_time("abc"));
+        assert!(!AppConfig::validate_schedule_time("12:"));
+        assert!(!AppConfig::validate_schedule_time(":30"));
+        // Hora inválida
+        assert!(!AppConfig::validate_schedule_time("24:00"));
+        assert!(!AppConfig::validate_schedule_time("12:60"));
     }
 
     #[test]
