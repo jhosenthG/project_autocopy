@@ -63,7 +63,7 @@ pub fn perform_backup(source: &Path, dest: &Path, opts: BackupOptions) -> Backup
         total_bytes,
     });
 
-    fs::create_dir_all(&tmp_backup_path).map_err(|e| BackupError::CreateDirFailed(e))?;
+    fs::create_dir_all(&tmp_backup_path).map_err(BackupError::CreateDirFailed)?;
 
     for (index, entry) in entries.iter().enumerate() {
         if opts.cancel_flag.load(Ordering::Relaxed) {
@@ -154,7 +154,7 @@ pub fn list_versions(dest: &Path) -> BackupResult<Vec<PathBuf>> {
     }
 
     let mut versions: Vec<PathBuf> = fs::read_dir(dest)
-        .map_err(|e| BackupError::CreateDirFailed(e))?
+        .map_err(BackupError::CreateDirFailed)?
         .filter_map(|entry| entry.ok())
         .filter(|entry| {
             let path = entry.path();

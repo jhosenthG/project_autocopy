@@ -9,6 +9,7 @@ use std::sync::{mpsc, Arc};
 mod config;
 mod copy;
 mod error;
+#[allow(dead_code)]
 mod scheduler;
 mod ui;
 
@@ -23,7 +24,7 @@ fn get_log_dir() -> PathBuf {
 fn log_message(message: &str) {
     if let Some(log_dir) = get_log_dir().to_str() {
         let log_path = PathBuf::from(log_dir).join("autocopy.log");
-        fs::create_dir_all(&log_path.parent().unwrap_or(&log_path)).ok();
+        fs::create_dir_all(log_path.parent().unwrap_or(&log_path)).ok();
         if let Ok(mut file) = OpenOptions::new().create(true).append(true).open(&log_path) {
             let timestamp = chrono::Local::now().format("%Y-%m-%d %H:%M:%S");
             writeln!(file, "[{}] {}", timestamp, message).ok();

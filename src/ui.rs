@@ -42,6 +42,7 @@ pub struct BackupProgress {
 }
 
 impl AutoCopyApp {
+    #[allow(clippy::new_without_default)]
     pub fn new() -> Self {
         let config = AppConfig::load();
         let mut app = Self {
@@ -182,10 +183,10 @@ impl AutoCopyApp {
     }
 
     fn poll_progress(&mut self) {
-        let rx = match &self.progress_receiver {
-            Some(rx) => Some(rx.try_iter().collect::<Vec<_>>()),
-            None => None,
-        };
+        let rx = self
+            .progress_receiver
+            .as_ref()
+            .map(|rx| rx.try_iter().collect::<Vec<_>>());
 
         if let Some(events) = rx {
             for event in events {
@@ -295,7 +296,7 @@ impl AutoCopyApp {
     pub fn render_ui(&mut self, ui: &mut egui::Ui) {
         // Colors from design system
         let brand_color = egui::Color32::from_rgb(0, 102, 255);
-        let surface_dim = egui::Color32::from_rgb(210, 217, 244);
+        let _surface_dim = egui::Color32::from_rgb(210, 217, 244);
         let text_primary = egui::Color32::from_rgb(51, 51, 51);
         let text_secondary = egui::Color32::from_rgb(100, 100, 100);
         let border_color = egui::Color32::from_rgb(193, 213, 225);
@@ -426,7 +427,7 @@ impl AutoCopyApp {
 
             // Auto-formato: si escribe 1430 convertir a 14:30
             if filtered.len() == 4 && !filtered.contains(':') {
-                self.schedule_time = format!("{}", &filtered[..2]);
+                self.schedule_time = filtered[..2].to_string();
                 self.schedule_time.push(':');
                 self.schedule_time.push_str(&filtered[2..]);
             } else if filtered.len() == 2 && !filtered.contains(':') {
@@ -455,12 +456,10 @@ impl AutoCopyApp {
             // Validar formato de hora
             let is_valid_time = AppConfig::validate_schedule_time(&self.schedule_time);
 
-            if self.schedule_time != old_time {
-                if is_valid_time {
-                    self.update_next_backup_display();
-                    self.save_config();
-                    self.scheduling_active = false;
-                }
+            if self.schedule_time != old_time && is_valid_time {
+                self.update_next_backup_display();
+                self.save_config();
+                self.scheduling_active = false;
             }
 
             ui.add_space(4.0);
@@ -505,10 +504,8 @@ impl AutoCopyApp {
                 .fill(btn_bg)
                 .stroke(egui::Stroke::new(1.0, border_color))
                 .rounding(4.0);
-            if ui.add(btn).clicked() {
-                if self.save_config() {
-                    self.start_backup();
-                }
+            if ui.add(btn).clicked() && self.save_config() {
+                self.start_backup();
             }
 
             if self.is_backup_running {

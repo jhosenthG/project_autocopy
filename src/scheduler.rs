@@ -1,11 +1,11 @@
 use crate::config::AppConfig;
 use crate::error::{BackupError, BackupResult};
-use std::path::PathBuf;
+use std::path::Path;
 use std::process::Command;
 
 const TASK_NAME: &str = "AutoCopy";
 
-pub fn schedule_backup_task(exe_path: &PathBuf, time: &str) -> BackupResult<()> {
+pub fn schedule_backup_task(exe_path: &Path, time: &str) -> BackupResult<()> {
     let parts: Vec<&str> = time.split(':').collect();
     if parts.len() != 2 {
         return Err(BackupError::InvalidScheduleTime(time.to_string()));
@@ -126,6 +126,7 @@ fn _get_scheduled_time_from_xml() -> Option<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::path::PathBuf;
 
     #[test]
     fn test_schedule_invalid_time() {
