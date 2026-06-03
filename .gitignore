@@ -18,3 +18,14 @@ Cargo.lock
 # Archivos temporales
 *.tmp
 *.bak
+
+# Compiled binaries and releases
+releases/
+*.exe
+
+# Crashpad reports (Windows)
+crashpad_handler.log
+
+# Windows specific
+Thumbs.db
+ehthumbs.db
