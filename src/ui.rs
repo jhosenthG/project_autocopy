@@ -415,20 +415,69 @@ impl AutoCopyApp {
             ui.add_space(8.0);
 
             let old_time = self.schedule_time.clone();
-            ui.text_edit_singleline(&mut self.schedule_time);
+            let _response = ui.text_edit_singleline(&mut self.schedule_time);
+
+            // Filtrar entrada: solo permitir dígitos y dos puntos
+            let filtered: String = self
+                .schedule_time
+                .chars()
+                .filter(|c| c.is_ascii_digit() || *c == ':')
+                .collect();
+
+            // Auto-formato: si escribe 1430 convertir a 14:30
+            if filtered.len() == 4 && !filtered.contains(':') {
+                self.schedule_time = format!("{}", &filtered[..2]);
+                self.schedule_time.push(':');
+                self.schedule_time.push_str(&filtered[2..]);
+            } else if filtered.len() == 2 && !filtered.contains(':') {
+                // 2 dígitos completos -> auto-completar HH:00
+                self.schedule_time = format!("{}:00", filtered);
+            } else if filtered.len() <= 2 && old_time.contains(':') {
+                // Mantener el formato con dos puntos si ya tenía uno
+                self.schedule_time = filtered;
+            } else {
+                self.schedule_time = filtered;
+            }
+
+            // Auto-corregir minutos >= 60 (ej: 12:60 -> 13:00, 23:60 -> 00:00)
+            if self.schedule_time.contains(':') {
+                let parts: Vec<&str> = self.schedule_time.split(':').collect();
+                if parts.len() == 2 {
+                    if let (Ok(h), Ok(m)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
+                        if m >= 60 {
+                            let new_hour = (h + 1) % 24;
+                            self.schedule_time = format!("{:02}:00", new_hour);
+                        }
+                    }
+                }
+            }
+
+            // Validar formato de hora
+            let is_valid_time = AppConfig::validate_schedule_time(&self.schedule_time);
 
             if self.schedule_time != old_time {
-                self.update_next_backup_display();
-                self.save_config();
-                self.scheduling_active = false;
+                if is_valid_time {
+                    self.update_next_backup_display();
+                    self.save_config();
+                    self.scheduling_active = false;
+                }
             }
 
             ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new("(formato 24h, ej: 14:30)")
-                    .small()
-                    .color(text_secondary),
-            );
+
+            if !self.schedule_time.is_empty() && !is_valid_time {
+                ui.label(
+                    egui::RichText::new("Hora inválida")
+                        .small()
+                        .color(egui::Color32::RED),
+                );
+            } else {
+                ui.label(
+                    egui::RichText::new("(formato 24h, ej: 14:30)")
+                        .small()
+                        .color(text_secondary),
+                );
+            }
         });
 
         // Schedule info
