@@ -257,7 +257,7 @@ pub fn estimate_size(source: &Path) -> BackupResult<u64> {
     Ok(total)
 }
 
-fn get_available_space(path: &Path) -> BackupResult<u64> {
+pub(crate) fn get_available_space(path: &Path) -> BackupResult<u64> {
     let disks = Disks::new_with_refreshed_list();
     let path_str = path.to_string_lossy();
 

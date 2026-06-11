@@ -6,12 +6,15 @@ use std::path::PathBuf;
 use std::sync::atomic::AtomicBool;
 use std::sync::{mpsc, Arc};
 
+mod backup_runner;
 mod config;
 mod copy;
 mod error;
 #[allow(dead_code)]
 mod scheduler;
+mod theme;
 mod ui;
+mod version_manager;
 
 use config::AppConfig;
 use copy::{perform_backup, validate_paths, BackupOptions};
@@ -41,7 +44,14 @@ fn run_cli_backup() {
         Some(p) => p.clone(),
         None => {
             log_message("Error: No source path configured");
-            eprintln!("Error: No source path configured. Run the GUI first to configure.");
+            eprintln!(
+                "Error: No has configurado las rutas de respaldo.\n\
+                 Para configurar, ejecuta la aplicación sin argumentos:\n\
+                 \n  autocopy.exe\n\
+                 \ny selecciona las carpetas Origen y Destino en la interfaz gráfica.\n\
+                 La configuración se guarda en: {}\\autocopy\\config.json",
+                std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string())
+            );
             std::process::exit(1);
         }
     };
@@ -50,7 +60,14 @@ fn run_cli_backup() {
         Some(p) => p.clone(),
         None => {
             log_message("Error: No destination path configured");
-            eprintln!("Error: No destination path configured. Run the GUI first to configure.");
+            eprintln!(
+                "Error: No has configurado las rutas de respaldo.\n\
+                 Para configurar, ejecuta la aplicación sin argumentos:\n\
+                 \n  autocopy.exe\n\
+                 \ny selecciona las carpetas Origen y Destino en la interfaz gráfica.\n\
+                 La configuración se guarda en: {}\\autocopy\\config.json",
+                std::env::var("APPDATA").unwrap_or_else(|_| ".".to_string())
+            );
             std::process::exit(1);
         }
     };
@@ -93,10 +110,33 @@ fn run_cli_backup() {
 fn run_gui() {
     log_message("GUI mode started");
 
+    // Generate a simple icon programmatically (#14)
+    let icon_size = 32;
+    let mut icon_rgba = Vec::with_capacity(icon_size * icon_size * 4);
+    for y in 0..icon_size {
+        for x in 0..icon_size {
+            let cx = x as f32 - icon_size as f32 / 2.0;
+            let cy = y as f32 - icon_size as f32 / 2.0;
+            let dist = (cx * cx + cy * cy).sqrt();
+            if dist < icon_size as f32 / 2.0 - 1.0 {
+                // Blue circle (#0066FF) — brand color
+                icon_rgba.extend_from_slice(&[0, 102, 255, 255]);
+            } else {
+                icon_rgba.extend_from_slice(&[0, 0, 0, 0]); // transparent
+            }
+        }
+    }
+    let icon = eframe::egui::IconData {
+        rgba: icon_rgba,
+        width: icon_size as u32,
+        height: icon_size as u32,
+    };
+
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([700.0, 600.0])
             .with_min_inner_size([500.0, 400.0])
+            .with_icon(icon)
             .with_title("AutoCopy - Respaldo con Versionado"),
         ..Default::default()
     };
