@@ -52,7 +52,6 @@ pub fn path_row(
 
     let mut picked = false;
     ui.label(egui::RichText::new(label).color(theme.text_secondary));
-    ui.add_space(4.0);
 
     ui.horizontal(|ui| {
         let current_text = path
@@ -74,7 +73,10 @@ pub fn path_row(
         );
         resp.on_hover_text(field_tt);
 
-        if !text.is_empty() {
+        // Update path from text — allow clearing by setting to None
+        if text.is_empty() {
+            *path = None;
+        } else {
             *path = Some(PathBuf::from(text));
         }
 

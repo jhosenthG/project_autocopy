@@ -135,7 +135,7 @@ fn run_gui() {
     let native_options = eframe::NativeOptions {
         viewport: eframe::egui::ViewportBuilder::default()
             .with_inner_size([700.0, 600.0])
-            .with_min_inner_size([500.0, 400.0])
+            .with_min_inner_size([640.0, 480.0])
             .with_icon(icon)
             .with_title("AutoCopy - Respaldo con Versionado"),
         ..Default::default()
