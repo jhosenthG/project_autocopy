@@ -2,7 +2,6 @@
 target/
 
 # Rust - Archivos generados
-Cargo.lock
 *.pdb
 
 # Editor/IDE
