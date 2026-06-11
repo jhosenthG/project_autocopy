@@ -10,7 +10,6 @@ mod backup_runner;
 mod config;
 mod copy;
 mod error;
-#[allow(dead_code)]
 mod scheduler;
 mod theme;
 mod ui;

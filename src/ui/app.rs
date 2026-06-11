@@ -1,7 +1,7 @@
 use chrono::{DateTime, Local, Timelike};
 use eframe::egui::{self, Widget};
 use std::path::PathBuf;
-use std::sync::atomic::AtomicBool;
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{mpsc, Arc};
 use std::thread;
 use std::time::Duration;
@@ -58,6 +58,7 @@ pub struct AutoCopyApp {
     success_message: Option<String>,
     last_backup_time: Option<String>,
     scheduling_active: bool,
+    scheduler_cancel: Arc<AtomicBool>,
     next_backup_display: Option<String>,
     source_valid: Option<bool>,
     dest_valid: Option<bool>,
@@ -98,6 +99,7 @@ impl AutoCopyApp {
             success_message: None,
             last_backup_time: None,
             scheduling_active: false,
+            scheduler_cancel: Arc::new(AtomicBool::new(false)),
             next_backup_display: None,
             source_valid: None,
             dest_valid: None,
@@ -168,6 +170,12 @@ impl AutoCopyApp {
                 return;
             }
         };
+
+        // Validate paths and available space before starting
+        if let Err(e) = copy::validate_paths(&source, &dest) {
+            self.error_message = Some(format!("Error de validación: {}", e));
+            return;
+        }
 
         self.runner.start(source, dest, self.max_versions);
         self.backup_active = true;
@@ -279,12 +287,18 @@ impl eframe::App for AutoCopyApp {
             let max_versions = self.max_versions;
 
             self.scheduling_active = true;
+            self.scheduler_cancel = Arc::new(AtomicBool::new(false));
+            let cancel = self.scheduler_cancel.clone();
 
             thread::spawn(move || {
                 let mut last_executed_day = String::new();
 
                 loop {
                     thread::sleep(Duration::from_secs(30));
+
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
 
                     let now = Local::now();
                     let current_time = format!("{:02}:{:02}", now.hour(), now.minute());
@@ -324,6 +338,7 @@ impl eframe::App for AutoCopyApp {
         }
 
         if !self.schedule_enabled {
+            self.scheduler_cancel.store(true, Ordering::Relaxed);
             self.scheduling_active = false;
         }
 

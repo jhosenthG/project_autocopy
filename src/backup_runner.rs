@@ -71,12 +71,6 @@ impl BackupRunner {
         self.cancel_flag.store(true, Ordering::Relaxed);
     }
 
-    /// Whether a backup is currently in progress (started but not finished).
-    #[allow(dead_code)]
-    pub fn is_running(&self) -> bool {
-        self.progress.started && !self.progress.finished
-    }
-
     /// Polls all pending progress events and updates internal state.
     /// Returns `true` when the backup has just completed (Finished event received).
     pub fn poll(&mut self) -> bool {

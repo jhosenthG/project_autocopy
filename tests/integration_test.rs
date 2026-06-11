@@ -14,6 +14,14 @@ fn create_backup_opts() -> BackupOptions {
     }
 }
 
+fn create_cancelled_backup_opts() -> BackupOptions {
+    let cancel_flag = Arc::new(AtomicBool::new(true));
+    BackupOptions {
+        cancel_flag,
+        progress_tx: mpsc::channel().0,
+    }
+}
+
 #[test]
 fn test_full_backup_flow() {
     let source_dir = TempDir::new().unwrap();
@@ -88,4 +96,28 @@ fn test_validate_paths_rejects_nonexistent_source() {
 
     let result = copy::validate_paths(Path::new("C:/nonexistent_path_12345"), temp_dir.path());
     assert!(result.is_err());
+}
+
+#[test]
+fn test_cancelled_backup_returns_error_and_cleans_tmp() {
+    let source_dir = TempDir::new().unwrap();
+    let dest_dir = TempDir::new().unwrap();
+
+    fs::write(source_dir.path().join("file1.txt"), "content").unwrap();
+    fs::write(source_dir.path().join("file2.txt"), "more content").unwrap();
+
+    let result = copy::perform_backup(
+        source_dir.path(),
+        dest_dir.path(),
+        create_cancelled_backup_opts(),
+    );
+
+    assert!(matches!(result, Err(BackupError::Cancelled)));
+
+    // Verify no .tmp directories remain
+    for entry in fs::read_dir(dest_dir.path()).unwrap() {
+        let entry = entry.unwrap();
+        let name = entry.file_name().to_string_lossy().to_string();
+        assert!(!name.ends_with(".tmp"), "Leftover .tmp dir found: {}", name);
+    }
 }

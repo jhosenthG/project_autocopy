@@ -44,19 +44,24 @@ pub fn perform_backup(source: &Path, dest: &Path, opts: BackupOptions) -> Backup
         return Err(BackupError::Cancelled);
     }
 
+    let mut total_bytes: u64 = 0;
     let entries: Vec<_> = WalkDir::new(source)
         .into_iter()
         .filter_entry(|e| !is_skip_entry(e.path()))
         .filter_map(|e| e.ok())
-        .filter(|e| e.file_type().is_file())
+        .filter(|e| {
+            if e.file_type().is_file() {
+                if let Ok(meta) = e.metadata() {
+                    total_bytes += meta.len();
+                }
+                true
+            } else {
+                false
+            }
+        })
         .collect();
 
     let total_files = entries.len();
-    let total_bytes: u64 = entries
-        .iter()
-        .filter_map(|e| e.metadata().ok())
-        .map(|m| m.len())
-        .sum();
 
     let _ = opts.progress_tx.send(ProgressEvent::Started {
         total_files,

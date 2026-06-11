@@ -97,32 +97,6 @@ pub fn get_scheduled_time() -> Option<String> {
     None
 }
 
-fn _get_scheduled_time_from_xml() -> Option<String> {
-    let output = Command::new("schtasks")
-        .args(["/query", "/tn", TASK_NAME, "/xml"])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    let start_time = stdout.find("<StartBoundary>")?;
-    let rest = &stdout[start_time..];
-    let end = rest.find("</StartBoundary>")?;
-    let boundary = &rest[15..end];
-
-    let time_part = boundary.split('T').nth(1)?;
-    let time_parts: Vec<&str> = time_part.split(':').collect();
-    if time_parts.len() >= 2 {
-        Some(format!("{}:{}", time_parts[0], time_parts[1]))
-    } else {
-        None
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
