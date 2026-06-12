@@ -22,6 +22,7 @@ impl ScheduleResult {
     }
 }
 
+#[allow(clippy::too_many_arguments)]
 pub fn render(
     ui: &mut egui::Ui,
     schedule_enabled: &mut bool,
