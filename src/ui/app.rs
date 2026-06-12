@@ -1,4 +1,4 @@
-use chrono::{DateTime, Local, Timelike};
+use chrono::{Local, Timelike};
 use eframe::egui::{self, Widget};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -11,9 +11,10 @@ use crate::config::AppConfig;
 use crate::copy;
 use crate::scheduler;
 use crate::theme::AppTheme;
-use crate::version_manager::{self, SortOrder, VersionManager};
+use crate::version_manager::VersionManager;
 
-use super::components::{format_size, open_in_explorer, path_row};
+use super::panels;
+use super::state::UiState;
 
 // ---------------------------------------------------------------------------
 // Helper: parse "HH:MM" into (hour, minute) or fall back to (14, 30)
@@ -52,28 +53,16 @@ pub struct AutoCopyApp {
     runner: BackupRunner,
     version_mgr: VersionManager,
 
-    // -- UI state ------------------------------------------------------------
-    backup_active: bool,
-    error_message: Option<String>,
-    success_message: Option<String>,
-    last_backup_time: Option<String>,
-    scheduling_active: bool,
+    // -- Scheduler control ---------------------------------------------------
     scheduler_cancel: Arc<AtomicBool>,
-    next_backup_display: Option<String>,
-    source_valid: Option<bool>,
-    dest_valid: Option<bool>,
-    show_cancel_dialog: bool,
-    success_timer: Option<DateTime<Local>>,
-    pending_delete: Option<PathBuf>,
-    config_saved_at: Option<DateTime<Local>>,
-    winsched_active: bool,
-    logo: Option<egui::TextureHandle>,
+
+    // -- UI state (separated) ------------------------------------------------
+    ui: UiState,
 }
 
 impl AutoCopyApp {
     pub fn new() -> Self {
         let config = AppConfig::load();
-
         let (sched_h, sched_m) = parse_schedule_time(&config.schedule_time);
         let winsched = scheduler::is_scheduled();
 
@@ -95,39 +84,26 @@ impl AutoCopyApp {
             schedule_minute: sched_m,
             runner: BackupRunner::new(),
             version_mgr,
-            backup_active: false,
-            error_message: None,
-            success_message: None,
-            last_backup_time: None,
-            scheduling_active: false,
             scheduler_cancel: Arc::new(AtomicBool::new(false)),
-            next_backup_display: None,
-            source_valid: None,
-            dest_valid: None,
-            show_cancel_dialog: false,
-            success_timer: None,
-            pending_delete: None,
-            config_saved_at: None,
-            winsched_active: winsched,
-            logo: None,
+            ui: UiState::new(winsched),
         }
     }
 
     // -- Path validation -----------------------------------------------------
 
     fn validate_path_fields(&mut self) {
-        self.source_valid = match &self.source_path {
+        self.ui.source_valid = match &self.source_path {
             Some(p) if !p.as_os_str().is_empty() => Some(p.exists()),
             _ => None,
         };
-        self.dest_valid = match &self.dest_path {
+        self.ui.dest_valid = match &self.dest_path {
             Some(p) if !p.as_os_str().is_empty() => Some(
-                p.exists() && {
-                    self.source_path
+                p.exists()
+                    && self
+                        .source_path
                         .as_ref()
                         .map(|s| s.as_os_str() != p.as_os_str())
-                        .unwrap_or(true)
-                },
+                        .unwrap_or(true),
             ),
             _ => None,
         };
@@ -145,7 +121,7 @@ impl AutoCopyApp {
 
         match config.save() {
             Ok(()) => {
-                self.config_saved_at = Some(Local::now());
+                self.ui.config_saved_at = Some(Local::now());
                 true
             }
             Err(e) => {
@@ -161,33 +137,28 @@ impl AutoCopyApp {
         let source = match &self.source_path {
             Some(p) => p.clone(),
             None => {
-                self.error_message = Some("Por favor selecciona una carpeta origen.".to_string());
+                self.ui.error_message =
+                    Some("Por favor selecciona una carpeta origen.".to_string());
                 return;
             }
         };
         let dest = match &self.dest_path {
             Some(p) => p.clone(),
             None => {
-                self.error_message = Some("Por favor selecciona una carpeta destino.".to_string());
+                self.ui.error_message =
+                    Some("Por favor selecciona una carpeta destino.".to_string());
                 return;
             }
         };
 
-        // Validate paths and available space before starting
         if let Err(e) = copy::validate_paths(&source, &dest) {
-            self.error_message = Some(format!("Error de validación: {}", e));
+            self.ui.error_message = Some(format!("Error de validación: {}", e));
             return;
         }
 
         self.runner.start(source, dest, self.max_versions);
-        self.backup_active = true;
-        self.scheduling_active = true;
-    }
-
-    fn cancel_backup(&mut self) {
-        self.runner.cancel();
-        self.backup_active = false;
-        self.scheduling_active = false;
+        self.ui.backup_active = true;
+        self.ui.scheduling_active = true;
     }
 
     // -- Scheduling display --------------------------------------------------
@@ -202,7 +173,7 @@ impl AutoCopyApp {
                 if let (Ok(h), Ok(m)) = (parts[0].parse::<u32>(), parts[1].parse::<u32>()) {
                     let schedule_minutes = h * 60 + m;
 
-                    self.next_backup_display = Some(if schedule_minutes > current_minutes {
+                    self.ui.next_backup_display = Some(if schedule_minutes > current_minutes {
                         format!("hoy {:02}:{:02}", h, m)
                     } else {
                         format!("mañana {:02}:{:02}", h, m)
@@ -211,7 +182,7 @@ impl AutoCopyApp {
                 }
             }
         }
-        self.next_backup_display = None;
+        self.ui.next_backup_display = None;
     }
 }
 
@@ -222,58 +193,72 @@ impl eframe::App for AutoCopyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
         self.update_next_backup_display();
         self.validate_path_fields();
+        self.handle_auto_dismiss_timers();
+        self.handle_logo_lazy_load(ctx);
+        self.handle_keyboard_shortcuts(ctx);
+        self.handle_drag_and_drop(ctx);
+        self.update_scheduler();
+        self.poll_backup_progress();
+        self.render_dialogs(ctx);
+        egui::CentralPanel::default().show(ctx, |ui| {
+            self.render_ui(ui);
+        });
+    }
+}
 
-        // Auto-dismiss success messages after 3 seconds
-        if let Some(timer) = self.success_timer {
+// ===========================================================================
+//  Update helpers (extracted from update() for clarity)
+// ===========================================================================
+impl AutoCopyApp {
+    fn handle_auto_dismiss_timers(&mut self) {
+        if let Some(timer) = self.ui.success_timer {
             if (Local::now() - timer).num_seconds() >= 3 {
-                self.success_message = None;
-                self.success_timer = None;
+                self.ui.success_message = None;
+                self.ui.success_timer = None;
             }
         }
-
-        // Auto-clear config_saved_at after 1.5 seconds
-        if let Some(saved) = self.config_saved_at {
+        if let Some(saved) = self.ui.config_saved_at {
             if (Local::now() - saved).num_milliseconds() >= 1500 {
-                self.config_saved_at = None;
+                self.ui.config_saved_at = None;
             }
         }
+    }
 
-        // Lazy-load the logo texture on first frame
-        if self.logo.is_none() {
+    fn handle_logo_lazy_load(&mut self, ctx: &egui::Context) {
+        if self.ui.logo.is_none() {
             let png_bytes = include_bytes!("../../icons/icon_autocopy.png");
             if let Ok(img) = image::load_from_memory(png_bytes) {
                 let rgba = img.to_rgba8();
                 let size = [rgba.width() as usize, rgba.height() as usize];
                 let pixels = rgba.into_raw();
                 let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
-                self.logo =
+                self.ui.logo =
                     Some(ctx.load_texture("logo", color_image, egui::TextureOptions::default()));
             }
         }
+    }
 
-        // Keyboard shortcuts
-        {
-            let do_backup = ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::B));
-            if do_backup && self.save_config() {
-                self.start_backup();
-            }
-
-            let do_save = ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::S));
-            if do_save {
-                self.save_config();
-            }
-
-            let do_escape =
-                ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
-            if do_escape {
-                self.error_message = None;
-                self.success_message = None;
-                self.show_cancel_dialog = false;
-                self.pending_delete = None;
-            }
+    fn handle_keyboard_shortcuts(&mut self, ctx: &egui::Context) {
+        let do_backup = ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::B));
+        if do_backup && self.save_config() {
+            self.start_backup();
         }
 
-        // Drag & drop folders
+        let do_save = ctx.input_mut(|i| i.consume_key(egui::Modifiers::CTRL, egui::Key::S));
+        if do_save {
+            self.save_config();
+        }
+
+        let do_escape = ctx.input_mut(|i| i.consume_key(egui::Modifiers::NONE, egui::Key::Escape));
+        if do_escape {
+            self.ui.error_message = None;
+            self.ui.success_message = None;
+            self.ui.show_cancel_dialog = false;
+            self.ui.pending_delete = None;
+        }
+    }
+
+    fn handle_drag_and_drop(&mut self, ctx: &egui::Context) {
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
         if !dropped.is_empty() {
             for file in &dropped {
@@ -291,13 +276,14 @@ impl eframe::App for AutoCopyApp {
             }
             ctx.input_mut(|i| i.raw.dropped_files.clear());
         }
+    }
 
-        // In-app scheduler thread
-        if self.schedule_enabled && !self.scheduling_active {
+    fn update_scheduler(&mut self) {
+        if self.schedule_enabled && !self.ui.scheduling_active {
             let schedule_time = self.schedule_time.clone();
             let max_versions = self.max_versions;
 
-            self.scheduling_active = true;
+            self.ui.scheduling_active = true;
             self.scheduler_cancel = Arc::new(AtomicBool::new(false));
             let cancel = self.scheduler_cancel.clone();
 
@@ -350,82 +336,38 @@ impl eframe::App for AutoCopyApp {
 
         if !self.schedule_enabled {
             self.scheduler_cancel.store(true, Ordering::Relaxed);
-            self.scheduling_active = false;
+            self.ui.scheduling_active = false;
         }
+    }
 
-        // Poll backup progress
+    fn poll_backup_progress(&mut self) {
         if self.runner.poll() {
-            self.backup_active = false;
-            self.scheduling_active = false;
-            self.success_message = Some("Respaldo completado exitosamente.".to_string());
-            self.last_backup_time = Some(Local::now().format("%Y-%m-%d %H:%M").to_string());
+            self.ui.backup_active = false;
+            self.ui.scheduling_active = false;
+            self.ui.success_message = Some("Respaldo completado exitosamente.".to_string());
+            self.ui.last_backup_time = Some(Local::now().format("%Y-%m-%d %H:%M").to_string());
             if let Some(dest) = &self.dest_path {
                 self.version_mgr.set_dest(Some(dest.clone()));
                 self.version_mgr.refresh();
             }
         }
+    }
 
-        // -- Dialogs ---------------------------------------------------------
-
-        // Cancel confirmation dialog
-        if self.show_cancel_dialog {
-            egui::Window::new("Cancelar respaldo")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.label("¿Estás seguro de que deseas cancelar el respaldo?");
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("Sí, cancelar").clicked() {
-                            self.cancel_backup();
-                            self.show_cancel_dialog = false;
-                        }
-                        if ui.button("Continuar").clicked() {
-                            self.show_cancel_dialog = false;
-                        }
-                    });
-                });
-        }
-
-        // Delete version confirmation dialog
-        if let Some(path) = &self.pending_delete.clone() {
-            let name = path
-                .file_name()
-                .map(|n| n.to_string_lossy().to_string())
-                .unwrap_or_default();
-            egui::Window::new("Eliminar versión")
-                .collapsible(false)
-                .resizable(false)
-                .anchor(egui::Align2::CENTER_CENTER, [0.0, 0.0])
-                .show(ctx, |ui| {
-                    ui.label(format!("¿Eliminar permanentemente '{}'?", name));
-                    ui.add_space(8.0);
-                    ui.horizontal(|ui| {
-                        if ui.button("Sí, eliminar").clicked() {
-                            match self.version_mgr.delete_version(path) {
-                                Ok(()) => {
-                                    self.success_message =
-                                        Some("Versión eliminada correctamente.".to_string());
-                                }
-                                Err(_) => {
-                                    self.error_message =
-                                        Some("Error al eliminar la versión.".to_string());
-                                }
-                            }
-                            self.pending_delete = None;
-                        }
-                        if ui.button("Cancelar").clicked() {
-                            self.pending_delete = None;
-                        }
-                    });
-                });
-        }
-
-        // -- Main UI ---------------------------------------------------------
-        egui::CentralPanel::default().show(ctx, |ui| {
-            self.render_ui(ui);
-        });
+    fn render_dialogs(&mut self, ctx: &egui::Context) {
+        panels::dialogs::render_cancel_dialog(
+            ctx,
+            &mut self.ui.show_cancel_dialog,
+            &mut self.runner,
+            &mut self.ui.scheduling_active,
+            &mut self.ui.backup_active,
+        );
+        panels::dialogs::render_delete_dialog(
+            ctx,
+            &mut self.ui.pending_delete,
+            &mut self.version_mgr,
+            &mut self.ui.success_message,
+            &mut self.ui.error_message,
+        );
     }
 }
 
@@ -433,65 +375,24 @@ impl eframe::App for AutoCopyApp {
 //  UI Rendering
 // ===========================================================================
 impl AutoCopyApp {
-    #[allow(clippy::too_many_lines)]
     pub fn render_ui(&mut self, ui: &mut egui::Ui) {
         let theme = AppTheme::from_visuals(&ui.style().visuals);
 
-        ui.add_space(12.0);
+        // -- Logo / Title ----------------------------------------------------
+        panels::header::render(ui, &self.ui.logo, &theme);
 
-        // -- Logo / Title ------------------------------------------------------
-        if let Some(logo) = &self.logo {
-            ui.add(
-                egui::Image::from_texture((logo.id(), logo.size_vec2()))
-                    .max_height(72.0)
-                    .rounding(6.0),
-            );
-        }
-        ui.add_space(16.0);
-
-        // --------------------------------------------------------------------
-        // SECTION: Path Configuration
-        // --------------------------------------------------------------------
-        let _picked_source = path_row(
+        // -- Path Configuration ----------------------------------------------
+        let _ = panels::path_panel::render(
             ui,
-            "Origen:",
             &mut self.source_path,
-            self.source_valid,
+            &mut self.dest_path,
+            self.ui.source_valid,
+            self.ui.dest_valid,
+            &mut self.version_mgr,
             &theme,
         );
 
-        ui.add_space(12.0);
-
-        let picked_dest = path_row(ui, "Destino:", &mut self.dest_path, self.dest_valid, &theme);
-
-        if picked_dest {
-            if let Some(ref dest) = self.dest_path {
-                self.version_mgr.set_dest(Some(dest.clone()));
-                self.version_mgr.refresh();
-            }
-        }
-
-        // Available space on destination
-        if let Some(ref dest) = self.dest_path {
-            if dest.exists() {
-                if let Ok(avail) = copy::get_available_space(dest) {
-                    ui.add_space(2.0);
-                    ui.label(
-                        egui::RichText::new(format!("Espacio disponible: {}", format_size(avail)))
-                            .small()
-                            .color(theme.text_secondary),
-                    );
-                }
-            }
-        }
-
-        ui.add_space(12.0);
-        ui.add(egui::Separator::default());
-        ui.add_space(12.0);
-
-        // --------------------------------------------------------------------
-        // SECTION: Version Settings
-        // --------------------------------------------------------------------
+        // -- Version Settings ------------------------------------------------
         ui.horizontal(|ui| {
             ui.label(egui::RichText::new("Máximo de versiones:").color(theme.text_secondary));
             ui.add_space(8.0);
@@ -506,149 +407,35 @@ impl AutoCopyApp {
                     .color(theme.text_secondary),
             );
         });
-
         ui.add_space(12.0);
         ui.add(egui::Separator::default());
         ui.add_space(12.0);
 
-        // --------------------------------------------------------------------
-        // SECTION: Schedule Settings
-        // --------------------------------------------------------------------
-        ui.label(
-            egui::RichText::new("Programar respaldo automático")
-                .heading()
-                .color(theme.text_primary),
+        // -- Schedule Settings -----------------------------------------------
+        let sched_result = panels::schedule_panel::render(
+            ui,
+            &mut self.schedule_enabled,
+            &mut self.schedule_time,
+            &mut self.schedule_hour,
+            &mut self.schedule_minute,
+            &mut self.config,
+            &mut self.ui.winsched_active,
+            &mut self.ui.scheduling_active,
+            self.ui.backup_active,
+            &self.ui.next_backup_display,
+            &self.scheduler_cancel,
+            &mut self.ui.config_saved_at,
+            &theme,
         );
-        ui.add_space(8.0);
-
-        ui.horizontal(|ui| {
-            if ui
-                .checkbox(&mut self.schedule_enabled, "")
-                .on_hover_text("Activar respaldo automático diario")
-                .clicked()
-            {
-                self.save_config();
-                if self.schedule_enabled {
-                    self.scheduling_active = false;
-                }
-            }
-            ui.label(egui::RichText::new("Activar respaldo automático").color(theme.text_primary));
-        });
-
-        ui.add_space(8.0);
-
-        // Time picker
-        ui.horizontal(|ui| {
-            ui.label(egui::RichText::new("Hora:").color(theme.text_secondary));
-            ui.add_space(8.0);
-
-            let old_h = self.schedule_hour;
-            let old_m = self.schedule_minute;
-
-            ui.add(
-                egui::Slider::new(&mut self.schedule_hour, 0..=23)
-                    .text("h")
-                    .clamping(egui::SliderClamping::Always),
-            )
-            .on_hover_text("Hora del respaldo automático (formato 24h)");
-
-            ui.label(":");
-
-            ui.add(
-                egui::Slider::new(&mut self.schedule_minute, 0..=59)
-                    .text("m")
-                    .clamping(egui::SliderClamping::Always),
-            )
-            .on_hover_text("Minuto del respaldo automático");
-
-            if self.schedule_hour != old_h || self.schedule_minute != old_m {
-                self.schedule_time =
-                    format!("{:02}:{:02}", self.schedule_hour, self.schedule_minute);
-                self.save_config();
-                self.scheduling_active = false;
-            }
-        });
-
-        ui.add_space(8.0);
-
-        if let Some(next) = &self.next_backup_display {
-            ui.label(
-                egui::RichText::new(format!("Próximo respaldo: {}", next))
-                    .color(theme.text_secondary),
-            );
+        if let Some(msg) = sched_result.success_message {
+            self.ui.success_message = Some(msg);
+        }
+        if let Some(err) = sched_result.error_message {
+            self.ui.error_message = Some(err);
         }
 
-        if self.scheduling_active && !self.backup_active {
-            ui.add_space(4.0);
-            ui.label(
-                egui::RichText::new("Monitor de horario activo — esperando hora programada")
-                    .color(theme.text_secondary),
-            );
-        }
-
-        // Windows Task Scheduler integration
-        if self.schedule_enabled {
-            ui.add_space(4.0);
-            if self.winsched_active {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("Tarea en Windows: ACTIVA")
-                            .small()
-                            .color(theme.success_color),
-                    );
-                    if ui
-                        .add(
-                            egui::Button::new("Desactivar tarea de Windows")
-                                .fill(theme.danger_bg)
-                                .rounding(4.0),
-                        )
-                        .clicked()
-                    {
-                        if scheduler::unschedule_backup_task().is_ok() {
-                            self.winsched_active = false;
-                            self.success_message = Some("Tarea programada eliminada.".to_string());
-                        } else {
-                            self.error_message =
-                                Some("Error al eliminar tarea de Windows.".to_string());
-                        }
-                    }
-                });
-            } else {
-                ui.horizontal(|ui| {
-                    ui.label(
-                        egui::RichText::new("Tarea en Windows: INACTIVA")
-                            .small()
-                            .color(theme.text_secondary),
-                    );
-                    if ui
-                        .add(
-                            egui::Button::new("Crear tarea en Windows")
-                                .fill(theme.btn_bg)
-                                .rounding(4.0),
-                        )
-                        .clicked()
-                    {
-                        let exe = std::env::current_exe().unwrap_or_default();
-                        match scheduler::schedule_backup_task(&exe, &self.schedule_time) {
-                            Ok(()) => {
-                                self.winsched_active = true;
-                                self.success_message =
-                                    Some("Tarea programada creada en Windows.".to_string());
-                            }
-                            Err(e) => {
-                                self.error_message = Some(format!("Error al crear tarea: {}", e));
-                            }
-                        }
-                    }
-                });
-            }
-        }
-
+        // -- Buttons row -----------------------------------------------------
         ui.add_space(12.0);
-
-        // --------------------------------------------------------------------
-        // Buttons row
-        // --------------------------------------------------------------------
         ui.horizontal(|ui| {
             let btn = egui::Button::new("Respaldar ahora")
                 .fill(theme.btn_bg)
@@ -663,7 +450,7 @@ impl AutoCopyApp {
                 self.start_backup();
             }
 
-            if self.backup_active {
+            if self.ui.backup_active {
                 let cancel_btn = egui::Button::new("Cancelar")
                     .fill(theme.danger_bg)
                     .stroke(egui::Stroke::new(1.0, theme.danger_border))
@@ -673,71 +460,19 @@ impl AutoCopyApp {
                     .on_hover_text("Detener la copia en curso")
                     .clicked()
                 {
-                    self.show_cancel_dialog = true;
+                    self.ui.show_cancel_dialog = true;
                 }
             }
         });
 
-        // --------------------------------------------------------------------
-        // Progress section
-        // --------------------------------------------------------------------
-        if self.runner.progress.started && !self.runner.progress.finished {
-            ui.add_space(12.0);
-            ui.add(egui::Separator::default());
-            ui.add_space(8.0);
+        // -- Progress --------------------------------------------------------
+        panels::progress_panel::render(ui, &self.runner, &theme);
 
-            ui.label(egui::RichText::new("Progreso:").color(theme.text_primary));
-            ui.add_space(8.0);
-
-            let fraction = if self.runner.progress.total_files > 0 {
-                (self.runner.progress.current_index as f32)
-                    .min(self.runner.progress.total_files as f32)
-                    / self.runner.progress.total_files as f32
-            } else {
-                0.0
-            };
-
-            ui.add(
-                egui::ProgressBar::new(fraction)
-                    .fill(theme.brand_color)
-                    .rounding(12.0)
-                    .text(format!(
-                        "{}% ({}/{})",
-                        (fraction * 100.0) as usize,
-                        self.runner.progress.current_index,
-                        self.runner.progress.total_files
-                    )),
-            );
-
-            if !self.runner.progress.current_file.is_empty() {
-                ui.label(
-                    egui::RichText::new(format!("Copiando: {}", self.runner.progress.current_file))
-                        .color(theme.text_secondary),
-                );
-            }
-
-            if let Some((speed_bytes, eta_secs)) = self.runner.compute_eta() {
-                let speed_mb = speed_bytes / (1024.0 * 1024.0);
-                let eta_min = eta_secs / 60;
-                let eta_sec = eta_secs % 60;
-                ui.label(
-                    egui::RichText::new(format!(
-                        "Velocidad: ~{} MB/s  |  Tiempo restante: ~{}:{:02} min",
-                        speed_mb, eta_min, eta_sec
-                    ))
-                    .small()
-                    .color(theme.text_secondary),
-                );
-            }
-        }
-
+        // -- Save configuration button ---------------------------------------
         ui.add_space(12.0);
         ui.add(egui::Separator::default());
         ui.add_space(12.0);
 
-        // --------------------------------------------------------------------
-        // Save configuration button
-        // --------------------------------------------------------------------
         ui.horizontal(|ui| {
             let save_btn = egui::Button::new("Guardar configuración")
                 .fill(theme.btn_bg)
@@ -749,199 +484,44 @@ impl AutoCopyApp {
                 .clicked()
             {
                 if self.save_config() {
-                    self.success_message = Some("Configuración guardada".to_string());
+                    self.ui.success_message = Some("Configuración guardada".to_string());
                 } else {
-                    self.error_message = Some("Error al guardar configuración".to_string());
+                    self.ui.error_message = Some("Error al guardar configuración".to_string());
                 }
             }
 
             // Inline feedback
-            if let Some(saved) = self.config_saved_at {
+            if let Some(saved) = self.ui.config_saved_at {
                 if (Local::now() - saved).num_milliseconds() < 1500 {
                     ui.colored_label(theme.success_color, "✓ Guardado");
                 }
             }
         });
 
-        ui.add_space(12.0);
-        ui.add(egui::Separator::default());
-        ui.add_space(12.0);
-
-        // --------------------------------------------------------------------
-        // SECTION: Versions
-        // --------------------------------------------------------------------
-        ui.label(
-            egui::RichText::new("Versiones guardadas:")
-                .heading()
-                .color(theme.text_primary),
+        // -- Versions --------------------------------------------------------
+        panels::versions_panel::render(
+            ui,
+            &mut self.version_mgr,
+            &mut self.ui.pending_delete,
+            &theme,
         );
-        ui.add_space(8.0);
 
-        // Sort & filter controls
-        if !self.version_mgr.versions.is_empty() {
-            ui.horizontal(|ui| {
-                ui.label(
-                    egui::RichText::new("Orden:")
-                        .small()
-                        .color(theme.text_secondary),
-                );
-                egui::ComboBox::from_id_salt("sort_order")
-                    .selected_text(match self.version_mgr.sort_order {
-                        SortOrder::Newest => "Más recientes",
-                        SortOrder::Oldest => "Más antiguas",
-                        SortOrder::Largest => "Más grandes",
-                    })
-                    .show_ui(ui, |ui| {
-                        ui.selectable_value(
-                            &mut self.version_mgr.sort_order,
-                            SortOrder::Newest,
-                            "Más recientes",
-                        );
-                        ui.selectable_value(
-                            &mut self.version_mgr.sort_order,
-                            SortOrder::Oldest,
-                            "Más antiguas",
-                        );
-                        ui.selectable_value(
-                            &mut self.version_mgr.sort_order,
-                            SortOrder::Largest,
-                            "Más grandes",
-                        );
-                    });
+        // -- Error / Success messages ----------------------------------------
+        panels::messages::render(
+            ui,
+            &mut self.ui.error_message,
+            &mut self.ui.success_message,
+            &theme,
+        );
 
-                ui.add_space(12.0);
-                ui.label(
-                    egui::RichText::new("Filtrar:")
-                        .small()
-                        .color(theme.text_secondary),
-                );
-                let mut filter = self.version_mgr.filter.clone();
-                let filter_resp = ui.add(
-                    egui::TextEdit::singleline(&mut filter)
-                        .desired_width(120.0)
-                        .hint_text("buscar..."),
-                );
-                if filter_resp.changed() {
-                    self.version_mgr.filter = filter;
-                    self.version_mgr.refresh();
-                } else if filter != self.version_mgr.filter {
-                    self.version_mgr.refresh();
-                }
-            });
-            ui.add_space(4.0);
-        }
-
-        if self.version_mgr.versions.is_empty() {
-            ui.label(
-                egui::RichText::new("No hay versiones guardadas.")
-                    .italics()
-                    .color(theme.text_secondary),
-            );
-        } else {
-            egui::ScrollArea::vertical()
-                .max_height(200.0)
-                .auto_shrink(false)
-                .show(ui, |ui| {
-                    for version in &self.version_mgr.versions.clone() {
-                        ui.horizontal(|ui| {
-                            if let Some(name) = version.file_name() {
-                                let size = version_manager::folder_size(version);
-                                ui.label(format!(
-                                    "{} ({})",
-                                    name.to_string_lossy(),
-                                    format_size(size)
-                                ));
-                            }
-
-                            let open_btn = egui::Button::new("Abrir")
-                                .fill(theme.btn_bg)
-                                .stroke(egui::Stroke::new(1.0, theme.border_color))
-                                .rounding(4.0);
-                            if ui
-                                .add(open_btn)
-                                .on_hover_text("Abrir esta versión en el explorador de archivos")
-                                .clicked()
-                            {
-                                open_in_explorer(version);
-                            }
-
-                            let delete_btn = egui::Button::new("🗑")
-                                .fill(theme.danger_bg)
-                                .stroke(egui::Stroke::new(1.0, theme.danger_border))
-                                .rounding(4.0);
-                            if ui
-                                .add(delete_btn)
-                                .on_hover_text("Eliminar esta versión permanentemente")
-                                .clicked()
-                            {
-                                self.pending_delete = Some(version.clone());
-                            }
-                        });
-                    }
-                });
-        }
-
-        // --------------------------------------------------------------------
-        // Error / Success messages
-        // --------------------------------------------------------------------
-        if let Some(err) = self.error_message.clone() {
-            ui.add_space(8.0);
-            ui.colored_label(egui::Color32::RED, err);
-            if ui.button("Aceptar").clicked() {
-                self.error_message = None;
-            }
-        }
-
-        if let Some(msg) = self.success_message.clone() {
-            ui.add_space(8.0);
-            ui.colored_label(theme.success_color, msg);
-            if ui.button("Aceptar").clicked() {
-                self.success_message = None;
-            }
-        }
-
-        // --------------------------------------------------------------------
-        // Footer / Status bar
-        // --------------------------------------------------------------------
-        ui.add_space(16.0);
-        ui.add(egui::Separator::default());
-        ui.add_space(4.0);
-
-        ui.horizontal(|ui| {
-            ui.label(
-                egui::RichText::new("Estado:")
-                    .small()
-                    .color(theme.text_secondary),
-            );
-
-            let status = if self.backup_active {
-                "Respaldando...".to_string()
-            } else if self.schedule_enabled {
-                if let Some(next) = &self.next_backup_display {
-                    format!("Programado: {}", next)
-                } else {
-                    "Programado: —".to_string()
-                }
-            } else {
-                "Inactivo".to_string()
-            };
-            ui.colored_label(theme.text_secondary, status);
-
-            ui.with_layout(egui::Layout::right_to_left(egui::Align::Center), |ui| {
-                if let Some(last) = &self.last_backup_time {
-                    ui.label(
-                        egui::RichText::new(format!("Último: {}", last))
-                            .small()
-                            .color(theme.text_secondary),
-                    );
-                }
-
-                ui.label(
-                    egui::RichText::new("Desarrollado por JhosenthG")
-                        .small()
-                        .color(theme.muted_color),
-                );
-            });
-        });
+        // -- Footer / Status bar ---------------------------------------------
+        panels::status_bar::render(
+            ui,
+            self.ui.backup_active,
+            self.schedule_enabled,
+            &self.ui.last_backup_time,
+            &self.ui.next_backup_display,
+            &theme,
+        );
     }
 }
