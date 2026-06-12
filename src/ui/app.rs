@@ -2,7 +2,7 @@ use chrono::{DateTime, Local, Timelike};
 use eframe::egui::{self, Widget};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 use std::thread;
 use std::time::Duration;
 
@@ -67,6 +67,7 @@ pub struct AutoCopyApp {
     pending_delete: Option<PathBuf>,
     config_saved_at: Option<DateTime<Local>>,
     winsched_active: bool,
+    logo: Option<egui::TextureHandle>,
 }
 
 impl AutoCopyApp {
@@ -108,6 +109,7 @@ impl AutoCopyApp {
             pending_delete: None,
             config_saved_at: None,
             winsched_active: winsched,
+            logo: None,
         }
     }
 
@@ -233,6 +235,19 @@ impl eframe::App for AutoCopyApp {
         if let Some(saved) = self.config_saved_at {
             if (Local::now() - saved).num_milliseconds() >= 1500 {
                 self.config_saved_at = None;
+            }
+        }
+
+        // Lazy-load the logo texture on first frame
+        if self.logo.is_none() {
+            let png_bytes = include_bytes!("../../icons/icon_autocopy.png");
+            if let Ok(img) = image::load_from_memory(png_bytes) {
+                let rgba = img.to_rgba8();
+                let size = [rgba.width() as usize, rgba.height() as usize];
+                let pixels = rgba.into_raw();
+                let color_image = egui::ColorImage::from_rgba_unmultiplied(size, &pixels);
+                self.logo =
+                    Some(ctx.load_texture("logo", color_image, egui::TextureOptions::default()));
             }
         }
 
@@ -428,12 +443,14 @@ impl AutoCopyApp {
 
         ui.add_space(12.0);
 
-        // -- Title -----------------------------------------------------------
-        ui.label(
-            egui::RichText::new("AutoCopy - Respaldo con Versionado")
-                .heading()
-                .color(theme.text_primary),
-        );
+        // -- Logo / Title ------------------------------------------------------
+        if let Some(logo) = &self.logo {
+            ui.add(
+                egui::Image::from_texture((logo.id(), logo.size_vec2()))
+                    .max_height(72.0)
+                    .rounding(6.0),
+            );
+        }
         ui.add_space(16.0);
 
         // --------------------------------------------------------------------
