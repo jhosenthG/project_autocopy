@@ -1,4 +1,3 @@
-use crate::config::AppConfig;
 use crate::error::{BackupError, BackupResult};
 use std::path::Path;
 use std::process::Command;
@@ -66,35 +65,6 @@ pub fn is_scheduled() -> bool {
         Ok(o) => o.status.success(),
         Err(_) => false,
     }
-}
-
-pub fn get_scheduled_time() -> Option<String> {
-    let output = Command::new("schtasks")
-        .args(["/query", "/tn", TASK_NAME, "/fo", "list", "/v"])
-        .output()
-        .ok()?;
-
-    if !output.status.success() {
-        return None;
-    }
-
-    let stdout = String::from_utf8_lossy(&output.stdout);
-
-    for line in stdout.lines() {
-        if line.contains("Start Time:") || line.contains("Hora de inicio:") {
-            if let Some(time) = line.split_whitespace().last() {
-                let parts: Vec<&str> = time.split(':').collect();
-                if parts.len() >= 2 {
-                    let hour_min = format!("{}:{}", parts[0], parts[1]);
-                    if AppConfig::validate_schedule_time(&hour_min) {
-                        return Some(hour_min);
-                    }
-                }
-            }
-        }
-    }
-
-    None
 }
 
 #[cfg(test)]

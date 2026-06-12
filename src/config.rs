@@ -66,46 +66,11 @@ impl AppConfig {
         fs::write(config_path, content)?;
         Ok(())
     }
-
-    pub fn validate_schedule_time(time: &str) -> bool {
-        let parts: Vec<&str> = time.split(':').collect();
-        if parts.len() != 2 {
-            return false;
-        }
-
-        let hour: Result<u32, _> = parts[0].parse();
-        let minute: Result<u32, _> = parts[1].parse();
-
-        match (hour, minute) {
-            (Ok(h), Ok(m)) => h < 24 && m < 60,
-            _ => false,
-        }
-    }
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn test_validate_schedule_time_valid() {
-        assert!(AppConfig::validate_schedule_time("00:00"));
-        assert!(AppConfig::validate_schedule_time("14:30"));
-        assert!(AppConfig::validate_schedule_time("23:59"));
-    }
-
-    #[test]
-    fn test_validate_schedule_time_invalid() {
-        // Formato inválido
-        assert!(!AppConfig::validate_schedule_time("14-30"));
-        assert!(!AppConfig::validate_schedule_time(""));
-        assert!(!AppConfig::validate_schedule_time("abc"));
-        assert!(!AppConfig::validate_schedule_time("12:"));
-        assert!(!AppConfig::validate_schedule_time(":30"));
-        // Hora inválida
-        assert!(!AppConfig::validate_schedule_time("24:00"));
-        assert!(!AppConfig::validate_schedule_time("12:60"));
-    }
 
     #[test]
     fn test_default_config() {

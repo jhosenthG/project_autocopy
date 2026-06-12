@@ -1,3 +1,5 @@
+#![allow(dead_code, unused_imports)]
+
 pub mod backup_runner;
 pub mod config;
 pub mod copy;
