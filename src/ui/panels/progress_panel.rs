@@ -37,7 +37,7 @@ pub fn render(ui: &mut egui::Ui, runner: &BackupRunner, theme: &AppTheme) {
             );
         }
 
-        if let Some((speed_bytes, eta_secs)) = runner.compute_eta() {
+        if let Some((speed_bytes, eta_secs)) = runner.compute_eta(None) {
             let speed_mb = speed_bytes / (1024.0 * 1024.0);
             let eta_min = eta_secs / 60;
             let eta_sec = eta_secs % 60;

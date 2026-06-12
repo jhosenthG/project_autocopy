@@ -31,11 +31,12 @@ pub fn render(
     schedule_minute: &mut u32,
     config: &mut AppConfig,
     winsched_active: &mut bool,
-    scheduling_active: &mut bool,
+    scheduler_running: &mut bool,
     is_backup_active: bool,
     next_backup_display: &Option<String>,
     scheduler_cancel: &Arc<AtomicBool>,
     config_saved_at: &mut Option<DateTime<Local>>,
+    winsched_flag: &Arc<AtomicBool>,
     theme: &AppTheme,
 ) -> ScheduleResult {
     let mut result = ScheduleResult::new();
@@ -56,7 +57,7 @@ pub fn render(
             .clicked()
         {
             if *schedule_enabled {
-                *scheduling_active = false;
+                *scheduler_running = false;
             } else {
                 scheduler_cancel.store(true, Ordering::Relaxed);
             }
@@ -96,7 +97,29 @@ pub fn render(
             *schedule_time = format!("{:02}:{:02}", schedule_hour, schedule_minute);
             save_schedule_config(config, schedule_enabled, schedule_time);
             *config_saved_at = Some(Local::now());
-            *scheduling_active = false;
+
+            // Cancel the current scheduler thread (it captured the old time)
+            // and mark it as not running so update_scheduler spawns a new one.
+            scheduler_cancel.store(true, Ordering::Relaxed);
+            *scheduler_running = false;
+
+            // If the Windows Task Scheduler task is active, update it
+            // with the new time by simply re-creating it (/f overwrites).
+            if *winsched_active {
+                let exe = std::env::current_exe().unwrap_or_default();
+                match scheduler::schedule_backup_task(&exe, schedule_time) {
+                    Ok(()) => {
+                        winsched_flag.store(true, Ordering::Relaxed);
+                        result.success_message =
+                            Some("Tarea de Windows actualizada con la nueva hora.".to_string());
+                    }
+                    Err(e) => {
+                        result.error_message =
+                            Some(format!("Error al actualizar tarea de Windows: {}", e));
+                    }
+                }
+            }
+
             result.config_changed = true;
         }
     });
@@ -109,7 +132,7 @@ pub fn render(
         );
     }
 
-    if *scheduling_active && !is_backup_active {
+    if *scheduler_running && !is_backup_active {
         ui.add_space(4.0);
         ui.label(
             egui::RichText::new("Monitor de horario activo — esperando hora programada")
@@ -138,6 +161,7 @@ pub fn render(
                     match scheduler::unschedule_backup_task() {
                         Ok(()) => {
                             *winsched_active = false;
+                            winsched_flag.store(false, Ordering::Relaxed);
                             result.success_message =
                                 Some("Tarea programada eliminada.".to_string());
                         }
@@ -167,6 +191,7 @@ pub fn render(
                     match scheduler::schedule_backup_task(&exe, schedule_time) {
                         Ok(()) => {
                             *winsched_active = true;
+                            winsched_flag.store(true, Ordering::Relaxed);
                             result.success_message =
                                 Some("Tarea programada creada en Windows.".to_string());
                         }

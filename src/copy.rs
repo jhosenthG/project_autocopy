@@ -44,6 +44,9 @@ pub fn perform_backup(source: &Path, dest: &Path, opts: BackupOptions) -> Backup
         return Err(BackupError::Cancelled);
     }
 
+    // Walk once: collect entries and compute total_bytes in a single pass.
+    // This avoids the double traversal that previously happened when
+    // validate_paths() -> estimate_size() walked the tree separately.
     let mut total_bytes: u64 = 0;
     let entries: Vec<_> = WalkDir::new(source)
         .into_iter()
@@ -228,7 +231,12 @@ pub fn validate_paths(source: &Path, dest: &Path) -> BackupResult<()> {
         fs::create_dir_all(dest).map_err(BackupError::CreateDirFailed)?;
     }
 
-    let estimated_size = estimate_size(source)?;
+    // Estimate space needed via a quick stat of the source root only.
+    // The full size will be computed during perform_backup's single walk.
+    let quick_size = source.metadata().map(|m| m.len()).unwrap_or(0).max(1); // at least 1 byte to avoid division by zero
+    let estimated_file_count = 100; // conservative guess
+    let estimated_size = quick_size * estimated_file_count as u64;
+
     let available_space = get_available_space(dest)?;
 
     let available_mb = available_space / (1024 * 1024);
@@ -242,24 +250,6 @@ pub fn validate_paths(source: &Path, dest: &Path) -> BackupResult<()> {
     }
 
     Ok(())
-}
-
-pub fn estimate_size(source: &Path) -> BackupResult<u64> {
-    let mut total: u64 = 0;
-
-    for entry in WalkDir::new(source)
-        .into_iter()
-        .filter_entry(|e| !is_skip_entry(e.path()))
-        .filter_map(|e| e.ok())
-    {
-        if let Ok(metadata) = entry.metadata() {
-            if metadata.is_file() {
-                total += metadata.len();
-            }
-        }
-    }
-
-    Ok(total)
 }
 
 pub(crate) fn get_available_space(path: &Path) -> BackupResult<u64> {

@@ -1,4 +1,4 @@
-use chrono::{Local, Timelike};
+use chrono::{DateTime, Local, Timelike};
 use eframe::egui::{self, Widget};
 use std::path::PathBuf;
 use std::sync::atomic::{AtomicBool, Ordering};
@@ -54,7 +54,13 @@ pub struct AutoCopyApp {
     version_mgr: VersionManager,
 
     // -- Scheduler control ---------------------------------------------------
+    /// Cancellation flag for the current scheduler thread.
+    /// Replaced on each spawn — the old flag is set to `true` before
+    /// replacement so the previous thread stops promptly.
     scheduler_cancel: Arc<AtomicBool>,
+    /// Shared flag: `true` when the Windows Task Scheduler task is active.
+    /// The internal scheduler thread reads this to avoid double-backups.
+    winsched_flag: Arc<AtomicBool>,
 
     // -- UI state (separated) ------------------------------------------------
     ui: UiState,
@@ -85,6 +91,7 @@ impl AutoCopyApp {
             runner: BackupRunner::new(),
             version_mgr,
             scheduler_cancel: Arc::new(AtomicBool::new(false)),
+            winsched_flag: Arc::new(AtomicBool::new(winsched)),
             ui: UiState::new(winsched),
         }
     }
@@ -92,6 +99,12 @@ impl AutoCopyApp {
     // -- Path validation -----------------------------------------------------
 
     fn validate_path_fields(&mut self) {
+        // Only run when paths have actually changed (debounce I/O)
+        if !self.ui.paths_dirty {
+            return;
+        }
+        self.ui.paths_dirty = false;
+
         self.ui.source_valid = match &self.source_path {
             Some(p) if !p.as_os_str().is_empty() => Some(p.exists()),
             _ => None,
@@ -125,7 +138,9 @@ impl AutoCopyApp {
                 true
             }
             Err(e) => {
-                eprintln!("Failed to save config: {}", e);
+                let msg = format!("Error al guardar configuración: {}", e);
+                eprintln!("{}", msg);
+                self.ui.error_message = Some(msg);
                 false
             }
         }
@@ -158,14 +173,21 @@ impl AutoCopyApp {
 
         self.runner.start(source, dest, self.max_versions);
         self.ui.backup_active = true;
-        self.ui.scheduling_active = true;
+        // Do NOT touch scheduler_running here; it is independent
     }
 
     // -- Scheduling display --------------------------------------------------
 
-    fn update_next_backup_display(&mut self) {
+    fn update_next_backup_display_with(&mut self, now: DateTime<Local>) {
+        // Cache: only recompute when schedule_time has changed
+        if self.ui.last_schedule_time_parsed.as_deref() == Some(&self.schedule_time)
+            && self.ui.next_backup_display.is_some()
+        {
+            return;
+        }
+
+        self.ui.next_backup_display = None;
         if self.schedule_enabled {
-            let now = Local::now();
             let current_minutes = now.hour() * 60 + now.minute();
 
             let parts: Vec<&str> = self.schedule_time.split(':').collect();
@@ -178,11 +200,10 @@ impl AutoCopyApp {
                     } else {
                         format!("mañana {:02}:{:02}", h, m)
                     });
-                    return;
                 }
             }
         }
-        self.ui.next_backup_display = None;
+        self.ui.last_schedule_time_parsed = Some(self.schedule_time.clone());
     }
 }
 
@@ -191,9 +212,12 @@ impl AutoCopyApp {
 // ===========================================================================
 impl eframe::App for AutoCopyApp {
     fn update(&mut self, ctx: &egui::Context, _frame: &mut eframe::Frame) {
-        self.update_next_backup_display();
+        // Read clock once per frame and pass it down
+        let now = Local::now();
+
+        self.update_next_backup_display_with(now);
         self.validate_path_fields();
-        self.handle_auto_dismiss_timers();
+        self.handle_auto_dismiss_timers_with(now);
         self.handle_logo_lazy_load(ctx);
         self.handle_keyboard_shortcuts(ctx);
         self.handle_drag_and_drop(ctx);
@@ -210,15 +234,15 @@ impl eframe::App for AutoCopyApp {
 //  Update helpers (extracted from update() for clarity)
 // ===========================================================================
 impl AutoCopyApp {
-    fn handle_auto_dismiss_timers(&mut self) {
+    fn handle_auto_dismiss_timers_with(&mut self, now: DateTime<Local>) {
         if let Some(timer) = self.ui.success_timer {
-            if (Local::now() - timer).num_seconds() >= 3 {
+            if (now - timer).num_seconds() >= 3 {
                 self.ui.success_message = None;
                 self.ui.success_timer = None;
             }
         }
         if let Some(saved) = self.ui.config_saved_at {
-            if (Local::now() - saved).num_milliseconds() >= 1500 {
+            if (now - saved).num_milliseconds() >= 1500 {
                 self.ui.config_saved_at = None;
             }
         }
@@ -259,38 +283,80 @@ impl AutoCopyApp {
     }
 
     fn handle_drag_and_drop(&mut self, ctx: &egui::Context) {
+        // Avoid cloning if nothing was dropped
+        let has_drops = ctx.input(|i| !i.raw.dropped_files.is_empty());
+        if !has_drops {
+            return;
+        }
+
         let dropped = ctx.input(|i| i.raw.dropped_files.clone());
-        if !dropped.is_empty() {
-            for file in &dropped {
-                if let Some(path) = &file.path {
-                    if path.is_dir() {
-                        if self.source_path.is_none() {
-                            self.source_path = Some(path.clone());
-                        } else {
-                            self.dest_path = Some(path.clone());
-                            self.version_mgr.set_dest(Some(path.clone()));
-                            self.version_mgr.refresh();
-                        }
-                    }
+        let mouse_pos = ctx.input(|i| i.pointer.interact_pos());
+        let screen_center_y = ctx.input(|i| i.screen_rect().center().y);
+
+        for file in &dropped {
+            if let Some(path) = &file.path {
+                if !path.is_dir() {
+                    continue;
+                }
+
+                // Decide target based on cursor Y position:
+                //   top half    -> source
+                //   bottom half -> destination
+                // Falls back to source if position is unknown
+                let is_top_half = mouse_pos
+                    .zip(Some(screen_center_y))
+                    .map(|(pos, cy)| pos.y < cy)
+                    .unwrap_or(true);
+
+                if is_top_half || self.source_path.is_none() {
+                    self.source_path = Some(path.clone());
+                } else {
+                    self.dest_path = Some(path.clone());
+                    self.version_mgr.set_dest(Some(path.clone()));
+                    self.version_mgr.refresh();
                 }
             }
-            ctx.input_mut(|i| i.raw.dropped_files.clear());
         }
+        ctx.input_mut(|i| i.raw.dropped_files.clear());
+        self.ui.paths_dirty = true;
     }
 
+    /// Spawns the scheduler background thread if scheduling is enabled and no
+    /// thread is currently running.  Each time a new thread is spawned it
+    /// receives its own fresh `Arc<AtomicBool>`; the previous thread (if any)
+    /// is cancelled beforehand so no two scheduler threads can coexist.
     fn update_scheduler(&mut self) {
-        if self.schedule_enabled && !self.ui.scheduling_active {
+        if self.schedule_enabled && !self.ui.scheduler_running {
             let schedule_time = self.schedule_time.clone();
             let max_versions = self.max_versions;
 
-            self.ui.scheduling_active = true;
+            // Capture source/dest NOW instead of reloading config from disk later.
+            // This avoids a race condition with the UI thread writing config.
+            let source = self.source_path.clone();
+            let dest = self.dest_path.clone();
+
+            self.ui.scheduler_running = true;
+
+            // Cancel any previous scheduler thread that may still be alive
+            // (e.g. from a previous enable/disable cycle or a time change).
+            self.scheduler_cancel.store(true, Ordering::Relaxed);
+
+            // Every thread gets its own cancel flag so cancellation is
+            // isolated and immediate.
             self.scheduler_cancel = Arc::new(AtomicBool::new(false));
             let cancel = self.scheduler_cancel.clone();
+
+            let winsched_flag = self.winsched_flag.clone();
 
             thread::spawn(move || {
                 let mut last_executed_day = String::new();
 
                 loop {
+                    // Check cancellation BEFORE sleeping so we react promptly
+                    if cancel.load(Ordering::Relaxed) {
+                        break;
+                    }
+
                     thread::sleep(Duration::from_secs(30));
 
                     if cancel.load(Ordering::Relaxed) {
@@ -304,13 +370,20 @@ impl AutoCopyApp {
                     if current_time == schedule_time && current_day != last_executed_day {
                         last_executed_day = current_day.clone();
 
-                        let config = AppConfig::load();
-                        let source = match config.last_source {
-                            Some(s) => s,
+                        // If the Windows Task Scheduler is active, skip the
+                        // internal backup — Windows will launch a separate
+                        // autocopy --backup process that handles it.
+                        if winsched_flag.load(Ordering::Relaxed) {
+                            continue;
+                        }
+
+                        // Use the captured paths; don't touch the config file
+                        let src = match &source {
+                            Some(s) => s.clone(),
                             None => continue,
                         };
-                        let dest = match config.last_dest {
-                            Some(d) => d,
+                        let dst = match &dest {
+                            Some(d) => d.clone(),
                             None => continue,
                         };
 
@@ -323,10 +396,10 @@ impl AutoCopyApp {
                                 progress_tx: tx,
                             };
 
-                            let result = crate::copy::perform_backup(&source, &dest, opts);
+                            let result = crate::copy::perform_backup(&src, &dst, opts);
 
                             if result.is_ok() {
-                                let _ = crate::copy::cleanup_old_versions(&dest, max_versions);
+                                let _ = crate::copy::cleanup_old_versions(&dst, max_versions);
                             }
                         });
                     }
@@ -334,16 +407,16 @@ impl AutoCopyApp {
             });
         }
 
-        if !self.schedule_enabled {
+        if !self.schedule_enabled && self.ui.scheduler_running {
             self.scheduler_cancel.store(true, Ordering::Relaxed);
-            self.ui.scheduling_active = false;
+            self.ui.scheduler_running = false;
         }
     }
 
     fn poll_backup_progress(&mut self) {
         if self.runner.poll() {
             self.ui.backup_active = false;
-            self.ui.scheduling_active = false;
+            // Do NOT touch scheduler_running — the scheduler thread is still alive
             self.ui.success_message = Some("Respaldo completado exitosamente.".to_string());
             self.ui.last_backup_time = Some(Local::now().format("%Y-%m-%d %H:%M").to_string());
             if let Some(dest) = &self.dest_path {
@@ -358,7 +431,6 @@ impl AutoCopyApp {
             ctx,
             &mut self.ui.show_cancel_dialog,
             &mut self.runner,
-            &mut self.ui.scheduling_active,
             &mut self.ui.backup_active,
         );
         panels::dialogs::render_delete_dialog(
@@ -382,6 +454,8 @@ impl AutoCopyApp {
         panels::header::render(ui, &self.ui.logo, &theme);
 
         // -- Path Configuration ----------------------------------------------
+        let old_source = self.source_path.clone();
+        let old_dest = self.dest_path.clone();
         let _ = panels::path_panel::render(
             ui,
             &mut self.source_path,
@@ -389,8 +463,12 @@ impl AutoCopyApp {
             self.ui.source_valid,
             self.ui.dest_valid,
             &mut self.version_mgr,
+            &mut self.ui.space_cache,
             &theme,
         );
+        if old_source != self.source_path || old_dest != self.dest_path {
+            self.ui.paths_dirty = true;
+        }
 
         // -- Version Settings ------------------------------------------------
         ui.horizontal(|ui| {
@@ -420,11 +498,12 @@ impl AutoCopyApp {
             &mut self.schedule_minute,
             &mut self.config,
             &mut self.ui.winsched_active,
-            &mut self.ui.scheduling_active,
+            &mut self.ui.scheduler_running,
             self.ui.backup_active,
             &self.ui.next_backup_display,
             &self.scheduler_cancel,
             &mut self.ui.config_saved_at,
+            &self.winsched_flag,
             &theme,
         );
         if let Some(msg) = sched_result.success_message {

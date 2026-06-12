@@ -7,7 +7,7 @@ pub fn render(
     success_message: &mut Option<String>,
     theme: &AppTheme,
 ) {
-    if let Some(err) = error_message.clone() {
+    if let Some(err) = error_message.as_deref() {
         ui.add_space(8.0);
         ui.colored_label(egui::Color32::RED, err);
         if ui.button("Aceptar").clicked() {
@@ -15,7 +15,7 @@ pub fn render(
         }
     }
 
-    if let Some(msg) = success_message.clone() {
+    if let Some(msg) = success_message.as_deref() {
         ui.add_space(8.0);
         ui.colored_label(theme.success_color, msg);
         if ui.button("Aceptar").clicked() {

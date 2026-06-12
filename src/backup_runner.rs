@@ -116,12 +116,13 @@ impl BackupRunner {
 
     /// Computes speed (bytes/sec) and ETA (seconds) for the current backup.
     /// Returns `None` if progress hasn't started, is finished, or no data yet.
-    pub fn compute_eta(&self) -> Option<(f64, u64)> {
+    pub fn compute_eta(&self, now: Option<DateTime<Local>>) -> Option<(f64, u64)> {
         if !self.progress.started || self.progress.finished {
             return None;
         }
         let start = self.progress.start_time?;
-        let elapsed = (Local::now() - start).num_seconds().max(1) as f64;
+        let now = now.unwrap_or_else(Local::now);
+        let elapsed = (now - start).num_seconds().max(1) as f64;
         let bytes_copied = self.progress.bytes_copied;
         if bytes_copied == 0 {
             return None;

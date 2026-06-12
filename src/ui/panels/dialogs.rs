@@ -7,7 +7,6 @@ pub fn render_cancel_dialog(
     ctx: &egui::Context,
     show_cancel_dialog: &mut bool,
     runner: &mut BackupRunner,
-    ui_state_scheduling_active: &mut bool,
     ui_state_backup_active: &mut bool,
 ) {
     if !*show_cancel_dialog {
@@ -25,7 +24,6 @@ pub fn render_cancel_dialog(
                 if ui.button("Sí, cancelar").clicked() {
                     runner.cancel();
                     *ui_state_backup_active = false;
-                    *ui_state_scheduling_active = false;
                     *show_cancel_dialog = false;
                 }
                 if ui.button("Continuar").clicked() {

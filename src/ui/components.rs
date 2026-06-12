@@ -55,7 +55,7 @@ pub fn path_row(
 
     ui.horizontal(|ui| {
         let current_text = path
-            .clone()
+            .as_ref()
             .map(|p| p.to_string_lossy().to_string())
             .unwrap_or_default();
 

@@ -86,7 +86,7 @@ pub fn render(
             .max_height(200.0)
             .auto_shrink(false)
             .show(ui, |ui| {
-                for version in &version_mgr.versions.clone() {
+                for version in &version_mgr.versions {
                     ui.horizontal(|ui| {
                         if let Some(name) = version.file_name() {
                             let size = version_manager::folder_size(version);
