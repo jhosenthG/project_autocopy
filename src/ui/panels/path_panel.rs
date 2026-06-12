@@ -4,11 +4,11 @@ use crate::theme::AppTheme;
 use crate::version_manager::VersionManager;
 use chrono::{DateTime, Local};
 use eframe::egui;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 /// Returns cached available space for `dest`, refreshing at most once every 5 seconds.
 fn get_cached_available_space(
-    dest: &PathBuf,
+    dest: &Path,
     cache: &mut Option<(u64, DateTime<Local>)>,
 ) -> Option<u64> {
     if let Some((space, time)) = cache {
