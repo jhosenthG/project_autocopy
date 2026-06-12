@@ -13,6 +13,9 @@ jobs:
   test:
     runs-on: windows-latest
     steps:
+      - name: Configure Git line endings
+        run: git config --global core.autocrlf false
+
       - name: Checkout
         uses: actions/checkout@v4
 
