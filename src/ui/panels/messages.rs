@@ -1,5 +1,5 @@
-use eframe::egui;
 use crate::theme::AppTheme;
+use eframe::egui;
 
 pub fn render(
     ui: &mut egui::Ui,

@@ -1,6 +1,6 @@
-use eframe::egui;
 use crate::backup_runner::BackupRunner;
 use crate::theme::AppTheme;
+use eframe::egui;
 
 pub fn render(ui: &mut egui::Ui, runner: &BackupRunner, theme: &AppTheme) {
     if runner.progress.started && !runner.progress.finished {
@@ -12,8 +12,7 @@ pub fn render(ui: &mut egui::Ui, runner: &BackupRunner, theme: &AppTheme) {
         ui.add_space(8.0);
 
         let fraction = if runner.progress.total_files > 0 {
-            (runner.progress.current_index as f32)
-                .min(runner.progress.total_files as f32)
+            (runner.progress.current_index as f32).min(runner.progress.total_files as f32)
                 / runner.progress.total_files as f32
         } else {
             0.0
