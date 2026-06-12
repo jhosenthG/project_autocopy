@@ -4,7 +4,7 @@ use std::io::Write;
 use std::path::PathBuf;
 
 use std::sync::atomic::AtomicBool;
-use std::sync::{mpsc, Arc};
+use std::sync::{Arc, mpsc};
 
 mod backup_runner;
 mod config;
@@ -16,7 +16,7 @@ mod ui;
 mod version_manager;
 
 use config::AppConfig;
-use copy::{perform_backup, validate_paths, BackupOptions};
+use copy::{BackupOptions, perform_backup, validate_paths};
 
 fn get_log_dir() -> PathBuf {
     let app_data = env::var("APPDATA").unwrap_or_else(|_| ".".to_string());
@@ -109,34 +109,29 @@ fn run_cli_backup() {
 fn run_gui() {
     log_message("GUI mode started");
 
-    // Generate a simple icon programmatically (#14)
-    let icon_size = 32;
-    let mut icon_rgba = Vec::with_capacity(icon_size * icon_size * 4);
-    for y in 0..icon_size {
-        for x in 0..icon_size {
-            let cx = x as f32 - icon_size as f32 / 2.0;
-            let cy = y as f32 - icon_size as f32 / 2.0;
-            let dist = (cx * cx + cy * cy).sqrt();
-            if dist < icon_size as f32 / 2.0 - 1.0 {
-                // Blue circle (#0066FF) — brand color
-                icon_rgba.extend_from_slice(&[0, 102, 255, 255]);
-            } else {
-                icon_rgba.extend_from_slice(&[0, 0, 0, 0]); // transparent
+    // Load the favicon as the application icon
+    let icon = {
+        let png_bytes = include_bytes!("../icons/icon_autocopy_favicon.PNG");
+        image::load_from_memory(png_bytes).ok().map(|img| {
+            let rgba = img.to_rgba8();
+            let (w, h) = rgba.dimensions();
+            eframe::egui::IconData {
+                rgba: rgba.into_raw(),
+                width: w,
+                height: h,
             }
-        }
-    }
-    let icon = eframe::egui::IconData {
-        rgba: icon_rgba,
-        width: icon_size as u32,
-        height: icon_size as u32,
+        })
     };
 
+    let mut viewport = eframe::egui::ViewportBuilder::default()
+        .with_inner_size([700.0, 600.0])
+        .with_min_inner_size([640.0, 480.0])
+        .with_title("AutoCopy - Respaldo con Versionado");
+    if let Some(ic) = icon {
+        viewport = viewport.with_icon(ic);
+    }
     let native_options = eframe::NativeOptions {
-        viewport: eframe::egui::ViewportBuilder::default()
-            .with_inner_size([700.0, 600.0])
-            .with_min_inner_size([640.0, 480.0])
-            .with_icon(icon)
-            .with_title("AutoCopy - Respaldo con Versionado"),
+        viewport,
         ..Default::default()
     };
 
