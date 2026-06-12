@@ -1,7 +1,7 @@
 use std::path::PathBuf;
+use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::mpsc;
-use std::sync::Arc;
 
 use chrono::{DateTime, Local};
 
@@ -30,13 +30,19 @@ pub struct BackupRunner {
     receiver: Option<mpsc::Receiver<ProgressEvent>>,
 }
 
-impl BackupRunner {
-    pub fn new() -> Self {
+impl Default for BackupRunner {
+    fn default() -> Self {
         Self {
             progress: BackupProgress::default(),
             cancel_flag: Arc::new(AtomicBool::new(false)),
             receiver: None,
         }
+    }
+}
+
+impl BackupRunner {
+    pub fn new() -> Self {
+        Self::default()
     }
 
     /// Starts a new backup in a background thread.

@@ -50,7 +50,7 @@ impl VersionManager {
 
         match self.sort_order {
             SortOrder::Newest => versions.sort_by(|a, b| b.cmp(a)),
-            SortOrder::Oldest => versions.sort_by(|a, b| a.cmp(b)),
+            SortOrder::Oldest => versions.sort(),
             SortOrder::Largest => versions.sort_by(|a, b| {
                 let size_a = folder_size(a);
                 let size_b = folder_size(b);

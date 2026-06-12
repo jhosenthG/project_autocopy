@@ -2,9 +2,9 @@ use autocopy::copy::{self, BackupOptions};
 use autocopy::error::BackupError;
 use std::fs;
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::atomic::AtomicBool;
 use std::sync::mpsc;
-use std::sync::Arc;
 use tempfile::TempDir;
 
 fn create_backup_opts() -> BackupOptions {

@@ -281,10 +281,6 @@ impl eframe::App for AutoCopyApp {
                     if path.is_dir() {
                         if self.source_path.is_none() {
                             self.source_path = Some(path.clone());
-                        } else if self.dest_path.is_none() {
-                            self.dest_path = Some(path.clone());
-                            self.version_mgr.set_dest(Some(path.clone()));
-                            self.version_mgr.refresh();
                         } else {
                             self.dest_path = Some(path.clone());
                             self.version_mgr.set_dest(Some(path.clone()));
