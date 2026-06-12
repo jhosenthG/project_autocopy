@@ -114,6 +114,15 @@ destino/
 
 ---
 
+## Documentación técnica
+
+Para desarrolladores y contribuidores, la documentación técnica del proyecto incluye:
+
+- [**architecture.md**](architecture.md) — Arquitectura actual, plan de diseño por paneles y principios de separación de responsabilidades.
+- [**specs.md**](specs.md) — Especificaciones técnicas detalladas de cada módulo, flujo de operación y testing.
+
+---
+
 ## Testing
 
 ```bash
