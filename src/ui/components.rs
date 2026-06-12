@@ -69,7 +69,7 @@ pub fn path_row(
         let resp = ui.add(
             egui::TextEdit::singleline(&mut text)
                 .hint_text(hint)
-                .desired_width(f32::INFINITY),
+                .desired_width(300.0),
         );
         resp.on_hover_text(field_tt);
 
